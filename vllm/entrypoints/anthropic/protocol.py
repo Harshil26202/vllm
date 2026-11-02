@@ -275,6 +275,13 @@ class AnthropicMessagesRequest(BaseModel):
     top_p: float | None = None
 
     # vLLM-specific fields that are not in Anthropic spec
+    min_tokens: int = Field(
+        default=0,
+        description=(
+            "Minimum number of tokens to generate before EOS or stop "
+            "sequences can end the response."
+        ),
+    )
     mm_payload: MMPayload = Field(
         default="tensors",
         description=(

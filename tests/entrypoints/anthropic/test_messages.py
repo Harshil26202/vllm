@@ -260,3 +260,19 @@ async def test_anthropic_server_tool_is_rejected(client: anthropic.AsyncAnthropi
     message = exc_info.value.body["error"]["message"]
     assert "'web_search_20250305' is not supported" in message
     assert "Field required" not in message
+
+
+@pytest.mark.asyncio
+async def test_anthropic_min_tokens(client: anthropic.AsyncAnthropic):
+    resp = await client.messages.create(
+        model="claude-3-7-sonnet-latest",
+        max_tokens=24,
+        messages=[{"role": "user", "content": "Reply with just the word OK."}],
+        extra_body={
+            "min_tokens": 24,
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
+    )
+
+    assert resp.usage.output_tokens == 24
+    assert resp.stop_reason == "max_tokens"
