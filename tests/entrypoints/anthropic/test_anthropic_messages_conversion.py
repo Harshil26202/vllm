@@ -1641,6 +1641,61 @@ class TestMessagesFullConverter:
         assert result.content[0].type == "text"
         assert result.content[0].text == ""
 
+    @staticmethod
+    def _forced_tool_call_response(
+        arguments: str, finish_reason: str, stop_reason: str | None = None
+    ) -> ChatCompletionResponse:
+        return ChatCompletionResponse(
+            id="chatcmpl-tool",
+            model="test-model",
+            choices=[
+                ChatCompletionResponseChoice(
+                    index=0,
+                    message=ChatMessage(
+                        role="assistant",
+                        content="",
+                        tool_calls=[
+                            ToolCall(
+                                id="call_1",
+                                function=FunctionCall(
+                                    name="get_weather", arguments=arguments
+                                ),
+                            )
+                        ],
+                    ),
+                    finish_reason=finish_reason,
+                    stop_reason=stop_reason,
+                )
+            ],
+            usage=UsageInfo(prompt_tokens=10, completion_tokens=8, total_tokens=18),
+        )
+
+    def test_tool_call_cut_by_max_tokens_keeps_partial_input(self):
+        """A forced tool call truncated by max_tokens carries invalid JSON
+        arguments; it must not fail the response."""
+        response = self._forced_tool_call_response(
+            '{"city": "Paris", "unit": "cel', finish_reason="length"
+        )
+
+        result = _make_full_converter().messages_full_converter(response)
+
+        assert result.stop_reason == "max_tokens"
+        (block,) = result.content
+        assert block.type == "tool_use"
+        assert block.input["city"] == "Paris"
+
+    def test_tool_call_cut_by_stop_sequence_is_not_tool_use(self):
+        """A stop string that cuts a tool call short must not report
+        tool_use, matching the streaming converter."""
+        response = self._forced_tool_call_response(
+            '{"city": "Par', finish_reason="stop", stop_reason="</call>"
+        )
+
+        result = _make_full_converter().messages_full_converter(response)
+
+        assert result.stop_reason == "stop_sequence"
+        assert result.stop_sequence == "</call>"
+
 
 # ======================================================================
 # cache_salt pass-through (Issue #46688)

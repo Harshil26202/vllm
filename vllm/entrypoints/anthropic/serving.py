@@ -14,6 +14,7 @@ from typing import Any, Literal, get_args
 
 import jinja2
 from fastapi import Request
+from partial_json_parser.core.options import Allow
 
 from vllm.engine.protocol import EngineClient
 from vllm.entrypoints.anthropic.protocol import (
@@ -62,6 +63,7 @@ from vllm.renderers.inputs.preprocess import (
 )
 from vllm.renderers.online_renderer import OnlineRenderer
 from vllm.renderers.params import ChatParams
+from vllm.tool_parsers.utils import partial_json_loads
 
 logger = init_logger(__name__)
 
@@ -153,6 +155,15 @@ def _is_json(text: str) -> bool:
     except json.JSONDecodeError:
         return False
     return True
+
+
+def _tool_input(arguments: str) -> dict[str, Any]:
+    """Decode possibly truncated tool call arguments into a ``tool_use`` input."""
+    try:
+        tool_input, _ = partial_json_loads(arguments, Allow.ALL)
+    except Exception:
+        return {}
+    return tool_input if isinstance(tool_input, dict) else {}
 
 
 def wrap_data_with_event(data: str, event: str):
@@ -931,12 +942,13 @@ class AnthropicServingMessages(OpenAIServingChat):
             ec_transfer_params=generator.ec_transfer_params,
         )
         choice = generator.choices[0]
+        tool_calls = choice.message.tool_calls
         result.stop_reason, result.stop_sequence = _to_anthropic_stop_reason(
             choice.finish_reason,
             choice.stop_reason,
-            tool_used=bool(choice.message.tool_calls),
-            # Their arguments are json-decoded below, so parsed calls are complete.
-            tool_complete=bool(choice.message.tool_calls),
+            tool_used=bool(tool_calls),
+            tool_complete=bool(tool_calls)
+            and all(_is_json(tc.function.arguments) for tc in tool_calls),
         )
 
         content: list[AnthropicContentBlock] = []
@@ -956,12 +968,12 @@ class AnthropicServingMessages(OpenAIServingChat):
                 )
             )
 
-        for tool_call in choice.message.tool_calls:
+        for tool_call in tool_calls:
             anthropic_tool_call = AnthropicContentBlock(
                 type="tool_use",
                 id=tool_call.id,
                 name=tool_call.function.name,
-                input=json.loads(tool_call.function.arguments),
+                input=_tool_input(tool_call.function.arguments),
             )
             content += [anthropic_tool_call]
 

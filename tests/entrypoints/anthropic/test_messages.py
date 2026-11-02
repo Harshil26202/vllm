@@ -260,3 +260,53 @@ async def test_anthropic_server_tool_is_rejected(client: anthropic.AsyncAnthropi
     message = exc_info.value.body["error"]["message"]
     assert "'web_search_20250305' is not supported" in message
     assert "Field required" not in message
+
+
+@pytest.fixture(scope="module")
+def json_tool_choice_server():
+    """Forced tool calls take the raw JSON arguments path only without the
+    parser's structural tag."""
+    args = [
+        "--max-model-len",
+        "2048",
+        "--enforce-eager",
+        "--enable-auto-tool-choice",
+        "--tool-call-parser",
+        "hermes",
+        "--served-model-name",
+        "claude-3-7-sonnet-latest",
+    ]
+    env_dict = {"VLLM_ENFORCE_STRICT_TOOL_CALLING": "0"}
+    with RemoteOpenAIServer(MODEL_NAME, args, env_dict=env_dict) as remote_server:
+        yield remote_server
+
+
+@pytest.mark.asyncio
+async def test_anthropic_forced_tool_call_cut_by_max_tokens(json_tool_choice_server):
+    async with json_tool_choice_server.get_async_client_anthropic() as client:
+        resp = await client.messages.create(
+            model="claude-3-7-sonnet-latest",
+            max_tokens=3,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "What's the weather like in New York today?",
+                }
+            ],
+            tools=[
+                {
+                    "name": "get_current_weather",
+                    "description": "Query the weather in a city.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"location": {"type": "string"}},
+                        "required": ["location"],
+                    },
+                }
+            ],
+            tool_choice={"type": "tool", "name": "get_current_weather"},
+        )
+
+        assert resp.stop_reason == "max_tokens"
+        (tool_use,) = [block for block in resp.content if block.type == "tool_use"]
+        assert tool_use.name == "get_current_weather"
